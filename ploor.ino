@@ -13,26 +13,32 @@
 #define DATABASE_URL "https://floor-df6a0-default-rtdb.asia-southeast1.firebasedatabase.app/"
 
 // ==== LCD I2C ====
-// Địa chỉ I2C thường là 0x27 hoặc 0x3F
-// SDA -> GPIO 21
-// SCL -> GPIO 22
-LiquidCrystal_I2C lcd(0x27, 16, 2); // Thử 0x27, nếu không được đổi thành 0x3F
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // ==== CẢM BIẾN ====
 const int trigPin = 23;
 const int echoPin = 19;
-const int ledPin = 2;
 const int PinSensor = 18; // Flow sensor
+
+// ==== 3 LED CẢNH BÁO ====
+const int ledGreen = 2;   // LED XANH - An toàn (> 20cm)
+const int ledYellow = 4;  // LED VÀNG - Cảnh báo (10-20cm)
+const int ledRed = 5;     // LED ĐỎ - Nguy hiểm (< 10cm)
+
+// ==== NGƯỠNG CẢNH BÁO ====
+const int SAFE_DISTANCE = 20;      // > 20cm: An toàn
+const int WARNING_DISTANCE = 10;   // 10-20cm: Cảnh báo
+                                   // < 10cm: Nguy hiểm
 
 // ==== BIẾN TOÀN CỤC ====
 volatile int NumPulses = 0;
-float factor_conversion = 7.11;  // Hz → L/min
+float factor_conversion = 7.11;
 float volume = 0;
 float flow_L_m = 0;
 unsigned long lastFlowTime = 0;
 unsigned long lastFirebaseTime = 0;
 unsigned long lastLcdUpdate = 0;
-int lcdMode = 0; // 0: Distance, 1: Flow+Volume
+int lcdMode = 0;
 
 FirebaseData fbdo;
 FirebaseAuth auth;
@@ -67,6 +73,34 @@ long readDistanceCM() {
   return distance;
 }
 
+// ==== ĐIỀU KHIỂN 3 LED THEO KHOẢNG CÁCH ====
+void controlWarningLEDs(long distance) {
+  if (distance > SAFE_DISTANCE) {
+    // AN TOÀN: Chỉ LED XANH sáng
+    digitalWrite(ledGreen, HIGH);
+    digitalWrite(ledYellow, LOW);
+    digitalWrite(ledRed, LOW);
+  } 
+  else if (distance >= WARNING_DISTANCE && distance <= SAFE_DISTANCE) {
+    // CẢNH BÁO: Chỉ LED VÀNG sáng
+    digitalWrite(ledGreen, LOW);
+    digitalWrite(ledYellow, HIGH);
+    digitalWrite(ledRed, LOW);
+  } 
+  else if (distance > 0 && distance < WARNING_DISTANCE) {
+    // NGUY HIỂM: Chỉ LED ĐỎ sáng
+    digitalWrite(ledGreen, LOW);
+    digitalWrite(ledYellow, LOW);
+    digitalWrite(ledRed, HIGH);
+  }
+  else {
+    // Lỗi cảm biến: Tắt hết LED
+    digitalWrite(ledGreen, LOW);
+    digitalWrite(ledYellow, LOW);
+    digitalWrite(ledRed, LOW);
+  }
+}
+
 // ==== KẾT NỐI WIFI ====
 void connectWiFi() {
   lcd.clear();
@@ -99,21 +133,30 @@ void connectWiFi() {
 
 // ==== CẬP NHẬT LCD ====
 void updateLCD(long distance, float flow, float vol) {
-  // Chế độ 1: Hiển thị khoảng cách
   if (lcdMode == 0) {
+    // Hiển thị khoảng cách + trạng thái
     lcd.setCursor(0, 0);
     lcd.print("Khoang cach:    ");
     lcd.setCursor(0, 1);
     
     if (distance > 0) {
       lcd.print(distance);
-      lcd.print(" cm      ");
+      lcd.print("cm ");
+      
+      // Hiển thị trạng thái
+      if (distance > SAFE_DISTANCE) {
+        lcd.print("AN TOAN ");
+      } else if (distance >= WARNING_DISTANCE) {
+        lcd.print("CANH BAO!");
+      } else {
+        lcd.print("NGUY HIEM!");
+      }
     } else {
       lcd.print("Loi cam bien    ");
     }
   }
-  // Chế độ 2: Hiển thị lưu lượng và thể tích
   else {
+    // Hiển thị lưu lượng và thể tích
     lcd.setCursor(0, 0);
     lcd.print("Flow:");
     lcd.print(flow, 2);
@@ -132,15 +175,30 @@ void setup() {
   
   // Khởi tạo LCD I2C
   lcd.begin();
-  lcd.backlight(); // Bật đèn nền
+  lcd.backlight();
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(" He Thong IoT  ");
   lcd.setCursor(0, 1);
-  lcd.print("  Khoi dong...  ");
+  lcd.print("  3 LED Canh Bao");
   delay(2000);
   
-  pinMode(ledPin, OUTPUT);
+  // Cấu hình 3 LED
+  pinMode(ledGreen, OUTPUT);
+  pinMode(ledYellow, OUTPUT);
+  pinMode(ledRed, OUTPUT);
+  
+  // Test LED khi khởi động
+  digitalWrite(ledGreen, HIGH);
+  delay(300);
+  digitalWrite(ledGreen, LOW);
+  digitalWrite(ledYellow, HIGH);
+  delay(300);
+  digitalWrite(ledYellow, LOW);
+  digitalWrite(ledRed, HIGH);
+  delay(300);
+  digitalWrite(ledRed, LOW);
+  
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   pinMode(PinSensor, INPUT_PULLUP);
@@ -174,19 +232,22 @@ void setup() {
   delay(2000);
   lcd.clear();
   Serial.println("✅ Hệ thống sẵn sàng!");
+  Serial.println("🚦 LED XANH: An toàn (>20cm)");
+  Serial.println("🚦 LED VÀNG: Cảnh báo (10-20cm)");
+  Serial.println("🚦 LED ĐỎ: Nguy hiểm (<10cm)");
 }
 
 // ==== LOOP ====
 void loop() {
   unsigned long now = millis();
 
-  // 1️⃣ Đo khoảng cách (HY-SRF05)
+  // 1️⃣ Đo khoảng cách và điều khiển LED
   long cm = readDistanceCM();
   if (cm > 0) {
-    digitalWrite(ledPin, (cm < 10) ? HIGH : LOW);
+    controlWarningLEDs(cm);
   }
 
-  // 2️⃣ Đo lưu lượng mỗi 1 giây (S201)
+  // 2️⃣ Đo lưu lượng mỗi 1 giây
   if (now - lastFlowTime >= 1000) {
     noInterrupts();
     int pulses = NumPulses;
@@ -202,9 +263,18 @@ void loop() {
 
     lastFlowTime = now;
 
+    // In trạng thái lên Serial
     Serial.print("📏 Distance: ");
     Serial.print(cm);
-    Serial.println(" cm");
+    Serial.print(" cm - ");
+    
+    if (cm > SAFE_DISTANCE) {
+      Serial.println("✅ AN TOÀN");
+    } else if (cm >= WARNING_DISTANCE) {
+      Serial.println("⚠️  CẢNH BÁO");
+    } else {
+      Serial.println("🚨 NGUY HIỂM");
+    }
 
     Serial.print("💧 Flow: ");
     Serial.print(flow_L_m, 3);
@@ -213,10 +283,10 @@ void loop() {
     Serial.println(" L");
   }
 
-  // 3️⃣ Cập nhật LCD mỗi 2 giây và đổi chế độ hiển thị
+  // 3️⃣ Cập nhật LCD mỗi 2 giây
   if (now - lastLcdUpdate >= 2000) {
     updateLCD(cm, flow_L_m, volume);
-    lcdMode = 1 - lcdMode; // Đổi giữa 0 và 1
+    lcdMode = 1 - lcdMode;
     lastLcdUpdate = now;
   }
 
