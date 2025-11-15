@@ -1,268 +1,614 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
-  <meta charset="utf-8">
-  <title>Code Viewer</title>
-  <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Sensor Dashboard</title>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDUgxuK6XL6DZY8jNeYKsmvsd8XYuQ_GsY",
+      databaseURL: "https://floor-df6a0-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    let currentMode = 'distance';
+    const SAFE_DISTANCE = 20;
+    const WARNING_DISTANCE = 10;
+
+    function animateValue(element, newValue, unit = "") {
+      const current = parseFloat(element.textContent) || 0;
+      const target = parseFloat(newValue) || 0;
+      const diff = target - current;
+      const steps = 20;
+      const stepValue = diff / steps;
+      let currentStep = 0;
+
+      const interval = setInterval(() => {
+        currentStep++;
+        const value = (current + stepValue * currentStep).toFixed(2);
+        element.textContent = value + " " + unit;
+        
+        if (currentStep >= steps) {
+          clearInterval(interval);
+          element.textContent = target.toFixed(2) + " " + unit;
+        }
+      }, 30);
+    }
+
+    let lastUpdate = Date.now();
+    let sensorData = {};
+    
+    onValue(ref(db, "/sensor"), (snapshot) => {
+      sensorData = snapshot.val();
+      lastUpdate = Date.now();
+      
+      document.getElementById("status").className = "status connected";
+      document.getElementById("status").textContent = "Đang kết nối";
+      
+      updateDisplay();
+      updateLEDs();
+    });
+
+    function updateDisplay() {
+      const valueEl = document.getElementById("value");
+
+      switch(currentMode) {
+        case 'distance':
+          if (sensorData?.ultrasonic?.distance !== undefined) {
+            animateValue(valueEl, sensorData.ultrasonic.distance, "cm");
+          }
+          break;
+        case 'flow':
+          if (sensorData?.flow?.flow_L_min !== undefined) {
+            animateValue(valueEl, sensorData.flow.flow_L_min, "L/min");
+          }
+          break;
+        case 'volume':
+          if (sensorData?.flow?.volume_L !== undefined) {
+            animateValue(valueEl, sensorData.flow.volume_L, "L");
+          }
+          break;
+      }
+    }
+
+    function updateLEDs() {
+      const distance = sensorData?.ultrasonic?.distance || 0;
+      
+      const ledGreen = document.getElementById('led-green');
+      const ledYellow = document.getElementById('led-yellow');
+      const ledRed = document.getElementById('led-red');
+      const statusText = document.getElementById('led-status-text');
+      
+      ledGreen.classList.remove('active');
+      ledYellow.classList.remove('active');
+      ledRed.classList.remove('active');
+      
+      if (distance > SAFE_DISTANCE) {
+        ledGreen.classList.add('active');
+        statusText.textContent = 'AN TOÀN';
+        statusText.className = 'led-status-text safe';
+      } 
+      else if (distance >= WARNING_DISTANCE && distance <= SAFE_DISTANCE) {
+        ledYellow.classList.add('active');
+        statusText.textContent = 'CẢNH BÁO';
+        statusText.className = 'led-status-text warning';
+      } 
+      else if (distance > 0 && distance < WARNING_DISTANCE) {
+        ledRed.classList.add('active');
+        statusText.textContent = 'NGUY HIỂM';
+        statusText.className = 'led-status-text danger';
+      }
+      else {
+        statusText.textContent = 'LỖI CẢM BIẾN';
+        statusText.className = 'led-status-text error';
+      }
+    }
+
+    window.switchMode = function(mode) {
+      currentMode = mode;
+      
+      document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.getElementById('btn-' + mode).classList.add('active');
+      
+      updateDisplay();
+    }
+
+    setInterval(() => {
+      if (Date.now() - lastUpdate > 5000) {
+        document.getElementById("status").className = "status disconnected";
+        document.getElementById("status").textContent = "Mất kết nối";
+      }
+    }, 1000);
+  </script>
 
   <style>
-    body { font-family: Arial; background:#e0f7ff; padding:20px; }
-    pre { background:#f7f7f7; padding:20px; border-radius:10px; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+      background-size: 50px 50px;
+      animation: gridMove 20s linear infinite;
+      pointer-events: none;
+    }
+
+    @keyframes gridMove {
+      0% { transform: translate(0, 0); }
+      100% { transform: translate(50px, 50px); }
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+      z-index: 1;
+      animation: fadeInDown 0.8s ease;
+    }
+
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    h1 {
+      color: #fff;
+      font-size: 2.5em;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+    }
+
+    .icon {
+      font-size: 1.2em;
+      display: inline-block;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 8px 20px;
+      border-radius: 25px;
+      font-size: 0.9em;
+      font-weight: 600;
+      margin-top: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .status.connected {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      border: 2px solid #10b981;
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+    }
+
+    .status.disconnected {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 2px solid #ef4444;
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+    }
+
+    .led-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(30, 30, 40, 0.95);
+      backdrop-filter: blur(10px);
+      padding: 25px 30px;
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+      z-index: 100;
+      animation: fadeInRight 0.8s ease;
+      border: 2px solid rgba(255,255,255,0.1);
+    }
+
+    @keyframes fadeInRight {
+      from {
+        opacity: 0;
+        transform: translateX(50px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .led-title {
+      color: #fff;
+      font-size: 0.85em;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 20px;
+      text-align: center;
+      opacity: 0.8;
+    }
+
+    .led-container {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .led-row {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .led {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      position: relative;
+      transition: all 0.3s ease;
+      background: rgba(60, 60, 70, 0.8);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+    }
+
+    .led::before {
+      content: '';
+      position: absolute;
+      top: 10%;
+      left: 10%;
+      width: 35%;
+      height: 35%;
+      background: rgba(255,255,255,0.3);
+      border-radius: 50%;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .led.active::before {
+      opacity: 1;
+    }
+
+    .led-green {
+      border: 3px solid #22c55e;
+    }
+
+    .led-green.active {
+      background: radial-gradient(circle at 30% 30%, #4ade80, #22c55e);
+      box-shadow: 0 0 30px rgba(34, 197, 94, 0.8),
+                  0 0 60px rgba(34, 197, 94, 0.4),
+                  inset 0 -3px 8px rgba(0,0,0,0.3);
+      animation: pulseGreen 2s ease-in-out infinite;
+    }
+
+    .led-yellow {
+      border: 3px solid #f59e0b;
+    }
+
+    .led-yellow.active {
+      background: radial-gradient(circle at 30% 30%, #fbbf24, #f59e0b);
+      box-shadow: 0 0 35px rgba(245, 158, 11, 0.9),
+                  0 0 70px rgba(245, 158, 11, 0.5),
+                  inset 0 -3px 8px rgba(0,0,0,0.3);
+      animation: pulseYellow 1s ease-in-out infinite;
+    }
+
+    .led-red {
+      border: 3px solid #ef4444;
+    }
+
+    .led-red.active {
+      background: radial-gradient(circle at 30% 30%, #f87171, #ef4444);
+      box-shadow: 0 0 40px rgba(239, 68, 68, 1),
+                  0 0 80px rgba(239, 68, 68, 0.6),
+                  inset 0 -3px 8px rgba(0,0,0,0.3);
+      animation: pulseRed 0.5s ease-in-out infinite;
+    }
+
+    @keyframes pulseGreen {
+      0%, 100% { 
+        box-shadow: 0 0 30px rgba(34, 197, 94, 0.8),
+                    0 0 60px rgba(34, 197, 94, 0.4),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+      50% { 
+        box-shadow: 0 0 40px rgba(34, 197, 94, 1),
+                    0 0 80px rgba(34, 197, 94, 0.6),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+    }
+
+    @keyframes pulseYellow {
+      0%, 100% { 
+        box-shadow: 0 0 35px rgba(245, 158, 11, 0.9),
+                    0 0 70px rgba(245, 158, 11, 0.5),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+      50% { 
+        box-shadow: 0 0 50px rgba(245, 158, 11, 1),
+                    0 0 100px rgba(245, 158, 11, 0.7),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+    }
+
+    @keyframes pulseRed {
+      0%, 100% { 
+        box-shadow: 0 0 40px rgba(239, 68, 68, 1),
+                    0 0 80px rgba(239, 68, 68, 0.6),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+      50% { 
+        box-shadow: 0 0 60px rgba(239, 68, 68, 1),
+                    0 0 120px rgba(239, 68, 68, 0.8),
+                    inset 0 -3px 8px rgba(0,0,0,0.3);
+      }
+    }
+
+    .led-label {
+      color: #fff;
+      font-size: 0.95em;
+      font-weight: 600;
+      min-width: 100px;
+    }
+
+    .led-info {
+      font-size: 0.75em;
+      color: rgba(255,255,255,0.5);
+      margin-left: 5px;
+    }
+
+    .led-status-text {
+      text-align: center;
+      font-size: 1em;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      margin-top: 10px;
+    }
+
+    .led-status-text.safe {
+      background: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+      border: 2px solid #22c55e;
+    }
+
+    .led-status-text.warning {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 2px solid #f59e0b;
+    }
+
+    .led-status-text.danger {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 2px solid #ef4444;
+      animation: blinkText 1s infinite;
+    }
+
+    .led-status-text.error {
+      background: rgba(100, 100, 110, 0.2);
+      color: #94a3b8;
+      border: 2px solid #64748b;
+    }
+
+    @keyframes blinkText {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.3; }
+    }
+
+    .mode-buttons {
+      display: flex;
+      gap: 15px;
+      justify-content: center;
+      margin-bottom: 30px;
+      z-index: 1;
+      animation: fadeIn 1s ease;
+      flex-wrap: wrap;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .mode-btn {
+      padding: 12px 25px;
+      border: none;
+      border-radius: 30px;
+      font-size: 0.95em;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      min-width: 160px;
+    }
+
+    .mode-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .mode-btn.active {
+      background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
+      color: #667eea;
+      box-shadow: 0 6px 25px rgba(0,0,0,0.3);
+      transform: scale(1.05);
+    }
+
+    .dashboard {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      max-width: 500px;
+      z-index: 1;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 25px;
+      padding: 50px 40px;
+      box-shadow: 0 15px 50px rgba(0,0,0,0.2);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      position: relative;
+      overflow: hidden;
+      animation: fadeInUp 0.8s ease;
+      width: 100%;
+      text-align: center;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .card:hover {
+      transform: translateY(-10px) scale(1.03);
+      box-shadow: 0 25px 70px rgba(0,0,0,0.3);
+    }
+
+    .value {
+      font-size: 3.5em;
+      font-weight: 800;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-top: 15px;
+      transition: all 0.3s ease;
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.8em;
+      }
+      
+      .card {
+        padding: 40px 30px;
+      }
+      
+      .value {
+        font-size: 2.8em;
+      }
+
+      .mode-buttons {
+        flex-direction: column;
+        width: 100%;
+        max-width: 300px;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        width: 100%;
+      }
+
+      .led-panel {
+        top: 10px;
+        right: 10px;
+        padding: 20px;
+      }
+
+      .led {
+        width: 40px;
+        height: 40px;
+      }
+
+      .led-label {
+        font-size: 0.85em;
+        min-width: 80px;
+      }
+
+      .led-status-text {
+        font-size: 0.85em;
+        padding: 10px 15px;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>Code ESP32 / Arduino</h1>
-  <pre><code class="language-cpp">
- #include <WiFi.h>
-#include <Firebase_ESP_Client.h>
-#include <LiquidCrystal_I2C.h>
-#include "addons/TokenHelper.h"
-#include "addons/RTDBHelper.h"
+  <div class="led-panel">
+    <div class="led-title">🚦 LED CẢNH BÁO</div>
+    <div class="led-container">
+      <div class="led-row">
+        <div id="led-green" class="led led-green"></div>
+        <div class="led-label">XANH <span class="led-info">(>20cm)</span></div>
+      </div>
+      <div class="led-row">
+        <div id="led-yellow" class="led led-yellow"></div>
+        <div class="led-label">VÀNG <span class="led-info">(10-20cm)</span></div>
+      </div>
+      <div class="led-row">
+        <div id="led-red" class="led led-red"></div>
+        <div class="led-label">ĐỎ <span class="led-info">(<10cm)</span></div>
+      </div>
+    </div>
+    <div id="led-status-text" class="led-status-text error">CHỜ DỮ LIỆU</div>
+  </div>
 
-// ==== WIFI ====
-#define WIFI_SSID "Chann"
-#define WIFI_PASSWORD "tamsochin"
+  <div class="header">
+    <h1>
+      <span class="icon">💧</span>
+      ESP32 Dashboard
+      <span class="icon">📊</span>
+    </h1>
+    <div id="status" class="status">Đang tải...</div>
+  </div>
 
-// ==== FIREBASE ====
-#define API_KEY "AIzaSyDUgxuK6XL6DZY8jNeYKsmvsd8XYuQ_GsY"
-#define DATABASE_URL "https://floor-df6a0-default-rtdb.asia-southeast1.firebasedatabase.app/"
+  <div class="mode-buttons">
+    <button id="btn-distance" class="mode-btn active" onclick="switchMode('distance')">Khoảng cách</button>
+    <button id="btn-flow" class="mode-btn" onclick="switchMode('flow')">Lưu lượng</button>
+    <button id="btn-volume" class="mode-btn" onclick="switchMode('volume')">Thể tích</button>
+  </div>
 
-// ==== LCD I2C ====
-// Địa chỉ I2C thường là 0x27 hoặc 0x3F
-// SDA -> GPIO 21
-// SCL -> GPIO 22
-LiquidCrystal_I2C lcd(0x27, 16, 2); // Thử 0x27, nếu không được đổi thành 0x3F
-
-// ==== CẢM BIẾN ====
-const int trigPin = 23;
-const int echoPin = 19;
-const int ledPin = 2;
-const int PinSensor = 18; // Flow sensor
-
-// ==== BIẾN TOÀN CỤC ====
-volatile int NumPulses = 0;
-float factor_conversion = 7.11;  // Hz → L/min
-float volume = 0;
-float flow_L_m = 0;
-unsigned long lastFlowTime = 0;
-unsigned long lastFirebaseTime = 0;
-unsigned long lastLcdUpdate = 0;
-int lcdMode = 0; // 0: Distance, 1: Flow+Volume
-
-FirebaseData fbdo;
-FirebaseAuth auth;
-FirebaseConfig config;
-bool signupOK = false;
-
-// ==== HÀM NGẮT ====
-void IRAM_ATTR CountPulse() {
-  NumPulses++;
-}
-
-// ==== HÀM ĐO KHOẢNG CÁCH ====
-long readDistanceCM() {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-
-  unsigned long start = micros();
-  while (digitalRead(echoPin) == LOW) {
-    if (micros() - start > 25000) return -1;
-  }
-
-  start = micros();
-  while (digitalRead(echoPin) == HIGH) {
-    if (micros() - start > 25000) return -1;
-  }
-
-  unsigned long duration = micros() - start;
-  long distance = duration / 58;
-  return distance;
-}
-
-// ==== KẾT NỐI WIFI ====
-void connectWiFi() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Ket noi WiFi...");
-  
-  Serial.print("🔌 Đang kết nối Wi-Fi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int dots = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    lcd.setCursor(dots % 16, 1);
-    lcd.print(".");
-    dots++;
-    delay(500);
-  }
-  
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("WiFi Ket Noi!");
-  lcd.setCursor(0, 1);
-  lcd.print(WiFi.localIP());
-  delay(2000);
-  
-  Serial.println("\n✅ Wi-Fi đã kết nối!");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-}
-
-// ==== CẬP NHẬT LCD ====
-void updateLCD(long distance, float flow, float vol) {
-  // Chế độ 1: Hiển thị khoảng cách
-  if (lcdMode == 0) {
-    lcd.setCursor(0, 0);
-    lcd.print("Khoang cach:    ");
-    lcd.setCursor(0, 1);
-    
-    if (distance > 0) {
-      lcd.print(distance);
-      lcd.print(" cm      ");
-    } else {
-      lcd.print("Loi cam bien    ");
-    }
-  }
-  // Chế độ 2: Hiển thị lưu lượng và thể tích
-  else {
-    lcd.setCursor(0, 0);
-    lcd.print("Flow:");
-    lcd.print(flow, 2);
-    lcd.print("L/m  ");
-    
-    lcd.setCursor(0, 1);
-    lcd.print("Vol:");
-    lcd.print(vol, 2);
-    lcd.print("L    ");
-  }
-}
-
-// ==== SETUP ====
-void setup() {
-  Serial.begin(115200);
-  
-  // Khởi tạo LCD I2C
-  lcd.begin();
-  lcd.backlight(); // Bật đèn nền
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(" He Thong IoT  ");
-  lcd.setCursor(0, 1);
-  lcd.print("  Khoi dong...  ");
-  delay(2000);
-  
-  pinMode(ledPin, OUTPUT);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  pinMode(PinSensor, INPUT_PULLUP);
-
-  attachInterrupt(digitalPinToInterrupt(PinSensor), CountPulse, RISING);
-  connectWiFi();
-
-  // Firebase setup
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Ket noi Firebase");
-  
-  config.api_key = API_KEY;
-  config.database_url = DATABASE_URL;
-  config.token_status_callback = tokenStatusCallback;
-
-  if (Firebase.signUp(&config, &auth, "", "")) {
-    Serial.println("✅ Đăng ký Anonymous thành công!");
-    signupOK = true;
-    lcd.setCursor(0, 1);
-    lcd.print("Firebase OK!    ");
-  } else {
-    Serial.printf("❌ Lỗi đăng ký: %s\n", config.signer.signupError.message.c_str());
-    lcd.setCursor(0, 1);
-    lcd.print("Firebase Loi!   ");
-  }
-
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-
-  delay(2000);
-  lcd.clear();
-  Serial.println("✅ Hệ thống sẵn sàng!");
-}
-
-// ==== LOOP ====
-void loop() {
-  unsigned long now = millis();
-
-  // 1️⃣ Đo khoảng cách (HY-SRF05)
-  long cm = readDistanceCM();
-  if (cm > 0) {
-    digitalWrite(ledPin, (cm < 10) ? HIGH : LOW);
-  }
-
-  // 2️⃣ Đo lưu lượng mỗi 1 giây (S201)
-  if (now - lastFlowTime >= 1000) {
-    noInterrupts();
-    int pulses = NumPulses;
-    NumPulses = 0;
-    interrupts();
-
-    flow_L_m = pulses / factor_conversion;
-    if (flow_L_m > 0) {
-      volume += (flow_L_m / 60.0);
-    } else {
-      volume = 0;
-    }
-
-    lastFlowTime = now;
-
-    Serial.print("📏 Distance: ");
-    Serial.print(cm);
-    Serial.println(" cm");
-
-    Serial.print("💧 Flow: ");
-    Serial.print(flow_L_m, 3);
-    Serial.print(" L/min\tVolume: ");
-    Serial.print(volume, 3);
-    Serial.println(" L");
-  }
-
-  // 3️⃣ Cập nhật LCD mỗi 2 giây và đổi chế độ hiển thị
-  if (now - lastLcdUpdate >= 2000) {
-    updateLCD(cm, flow_L_m, volume);
-    lcdMode = 1 - lcdMode; // Đổi giữa 0 và 1
-    lastLcdUpdate = now;
-  }
-
-  // 4️⃣ Gửi dữ liệu Firebase mỗi 1 giây
-  if (Firebase.ready() && signupOK && (now - lastFirebaseTime >= 1000)) {
-    bool ok = true;
-    ok &= Firebase.RTDB.setInt(&fbdo, "/sensor/ultrasonic/distance", cm);
-    ok &= Firebase.RTDB.setFloat(&fbdo, "/sensor/flow/flow_L_min", flow_L_m);
-    ok &= Firebase.RTDB.setFloat(&fbdo, "/sensor/flow/volume_L", volume);
-
-    if (ok) {
-      Serial.println("✅ Gửi dữ liệu Firebase thành công!");
-    } else {
-      Serial.print("❌ Firebase lỗi: ");
-      Serial.println(fbdo.errorReason());
-    }
-    lastFirebaseTime = now;
-  }
-}
-  #include <WiFi.h>
-  #include <Firebase_ESP_Client.h>
-
-  void setup() {
-    Serial.begin(115200);
-    Serial.println("Hello!");
-  }
-  void loop() {}
-  </code></pre>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+  <div class="dashboard">
+    <div class="card">
+      <div id="value" class="value">-- cm</div>
+    </div>
+  </div>
 </body>
 </html>
